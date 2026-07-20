@@ -1499,7 +1499,7 @@
             font-size: 0.7rem;
         }
 
-        /* Notification permission banner */
+        /* Notification banner */
         .notif-banner {
             background: #f0f4ff;
             border: 1px solid #b3d4ff;
@@ -1536,6 +1536,38 @@
         .notif-banner .notif-btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+
+        /* Live indicator */
+        .live-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 0.15rem 0.7rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            border: 1px solid #a5d6a7;
+        }
+        .live-badge .pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #2e7d32;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 0.5;
+                transform: scale(0.8);
+            }
         }
     </style>
 </head>
@@ -1643,7 +1675,7 @@
         <section class="section-panel active" id="panelOrders">
             <div class="card">
                 <div class="card-header">
-                    <h3><i class="fas fa-box"></i> All Orders</h3>
+                    <h3><i class="fas fa-box"></i> All Orders <span class="live-badge"><span class="pulse"></span> Live</span></h3>
                     <span style="font-size:0.8rem;color:#888;" id="orderCountLabel">0 orders</span>
                 </div>
                 <div class="order-list" id="orderList">
@@ -1882,7 +1914,7 @@
             '--color-1-dark': '#2f0101',
             '--color-1-muted': '#5a1a1a',
             '--color-text-light': '#ffffff',
-            '--color-text-dark': '#1a1a1a',
+            '--color-text-dark': '#1a1a1e',
             '--warm-bg': '#d6c9bf',
             '--brigandy': '#470202'
         };
@@ -1980,7 +2012,9 @@
             if (Notification.permission === 'granted') {
                 notifPermissionGranted = true;
                 updateNotifBanner();
-                showToast('✅ Notifications already enabled.');
+                // Send test notification immediately
+                sendTestNotification();
+                showToast('✅ Notifications already enabled. Test message sent!');
                 return;
             }
             if (Notification.permission === 'denied') {
@@ -1991,20 +2025,33 @@
                 if (perm === 'granted') {
                     notifPermissionGranted = true;
                     updateNotifBanner();
-                    showToast('✅ Notifications enabled! You will get alerts for new orders.');
-                    // Send a test notification
-                    sendNotification('🔔 Notifications active', 'selva admin will notify you on new orders.');
+                    showToast('✅ Notifications enabled! Sending test message...');
+                    // Send test notification after a short delay
+                    setTimeout(() => {
+                        sendTestNotification();
+                    }, 400);
                 } else {
                     showToast('❌ Notification permission denied.');
                 }
             });
         }
 
+        function sendTestNotification() {
+            const title = '🔔 selva · Test Notification';
+            const body = '✅ Notifications are working! You will now receive real-time alerts for new orders.';
+            sendNotification(title, body);
+            // Also show a toast
+            showToast('📱 Test notification sent to your device!');
+        }
+
         function sendNotification(title, body) {
-            if (!notifPermissionGranted && Notification.permission === 'granted') {
+            // Update permission state
+            if ('Notification' in window && Notification.permission === 'granted') {
                 notifPermissionGranted = true;
                 updateNotifBanner();
             }
+
+            // Always try to send
             if (notifPermissionGranted && 'Notification' in window && Notification.permission === 'granted') {
                 try {
                     const notif = new Notification(title, {
@@ -2012,14 +2059,24 @@
                         icon: 'https://picsum.photos/seed/selva/64/64',
                         tag: 'selva-order',
                         requireInteraction: true,
+                        vibrate: [200, 100, 200],
+                        silent: false,
                     });
-                    setTimeout(() => notif.close(), 8000);
+                    // Auto-close after 10 seconds
+                    setTimeout(() => {
+                        try { notif.close(); } catch (e) {}
+                    }, 10000);
+                    return true;
                 } catch (e) {
                     console.warn('Notification error:', e);
+                    // Fallback to toast
+                    showToast('🔔 ' + title + ' — ' + body);
+                    return false;
                 }
             } else {
-                // fallback: show toast
+                // Fallback: show toast
                 showToast('🔔 ' + title + ' — ' + body);
+                return false;
             }
         }
 
@@ -2027,22 +2084,25 @@
             const banner = document.getElementById('notifBanner');
             const btn = document.getElementById('notifGrantBtn');
             if (!banner || !btn) return;
-            if (notifPermissionGranted || Notification.permission === 'granted') {
+            if (notifPermissionGranted || (Notification.permission === 'granted')) {
                 banner.style.background = '#e8f5e9';
                 banner.style.borderColor = '#a5d6a7';
-                banner.querySelector('.notif-text').innerHTML = '<i class="fas fa-check-circle" style="color:#2e7d32;"></i> Notifications enabled – you\'ll receive alerts for new orders.';
+                banner.querySelector('.notif-text').innerHTML =
+                    '<i class="fas fa-check-circle" style="color:#2e7d32;"></i> ✅ Notifications enabled – you\'ll receive alerts for new orders.';
                 btn.textContent = '✅ Enabled';
                 btn.disabled = true;
             } else if (Notification.permission === 'denied') {
                 banner.style.background = '#ffebee';
                 banner.style.borderColor = '#ef9a9a';
-                banner.querySelector('.notif-text').innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#c62828;"></i> Notifications blocked. Please allow in browser settings.';
+                banner.querySelector('.notif-text').innerHTML =
+                    '<i class="fas fa-exclamation-triangle" style="color:#c62828;"></i> Notifications blocked. Please allow in browser settings.';
                 btn.textContent = '🔔 Retry';
                 btn.disabled = false;
             } else {
                 banner.style.background = '#f0f4ff';
                 banner.style.borderColor = '#b3d4ff';
-                banner.querySelector('.notif-text').innerHTML = '<i class="fas fa-bell"></i> Get instant notifications on your phone when a new order is placed.';
+                banner.querySelector('.notif-text').innerHTML =
+                    '<i class="fas fa-bell"></i> Get instant notifications on your phone when a new order is placed.';
                 btn.textContent = '🔔 Enable Notifications';
                 btn.disabled = false;
             }
@@ -3048,53 +3108,71 @@
             document.getElementById('sidebarOverlay').classList.remove('open');
         }
 
-        // ─── LISTEN FOR NEW ORDERS (REAL-TIME) ──────────────────
+        // ─── REAL-TIME ORDER LISTENER ────────────────────────────
+        let lastKnownOrderKeys = new Set();
+        let isInitialOrderLoad = true;
+
         function listenForNewOrders() {
             const ordersRef = db.ref('orders');
-            let initialLoad = true;
-            let lastKnownOrderKeys = new Set();
 
             ordersRef.on('value', (snapshot) => {
                 const data = snapshot.val();
-                const newOrders = [];
+                const newOrderKeys = [];
+
                 if (data) {
-                    const entries = Object.entries(data);
-                    entries.forEach(([key, val]) => {
+                    const currentKeys = Object.keys(data);
+
+                    // Find new keys (not in lastKnownOrderKeys)
+                    for (const key of currentKeys) {
                         if (!lastKnownOrderKeys.has(key)) {
-                            newOrders.push({ ...val, _key: key });
+                            newOrderKeys.push(key);
                         }
-                    });
+                    }
+
                     // Update the set with all current keys
-                    lastKnownOrderKeys = new Set(entries.map(([k]) => k));
-                } else {
-                    lastKnownOrderKeys = new Set();
-                }
+                    lastKnownOrderKeys = new Set(currentKeys);
 
-                // If it's not the initial load and we have new orders, send notifications
-                if (!initialLoad && newOrders.length > 0) {
-                    newOrders.forEach(order => {
-                        const customerName = order.customer?.name || 'Someone';
-                        const total = order.total || 0;
-                        const items = order.items?.length || 0;
-                        const msg =
-                            `🛍️ New order from ${customerName}\nItems: ${items} · Total: ${formatLE(total)}\nTap to view.`;
-                        sendNotification(`📦 New Order #${order._key.slice(-8)}`, msg);
-                        // Also show toast
-                        showToast(`🛍️ New order from ${customerName} — ${formatLE(total)}`);
-                    });
-                }
-
-                // Update orders list
-                if (data) {
-                    allOrders = Object.entries(data).map(([key, val]) => ({ ...val, _key: key }));
+                    // Load fresh order data
+                    allOrders = currentKeys.map(key => ({ ...data[key], _key: key }));
                     allOrders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                } else {
-                    allOrders = [];
-                }
-                renderOrders();
-                updateBadges();
 
-                initialLoad = false;
+                    // If not initial load, send notifications for new orders
+                    if (!isInitialOrderLoad && newOrderKeys.length > 0) {
+                        for (const key of newOrderKeys) {
+                            const order = allOrders.find(o => o._key === key);
+                            if (order) {
+                                const customerName = order.customer?.name || 'Someone';
+                                const total = order.total || 0;
+                                const items = order.items?.length || 0;
+                                const shortId = key.slice(-8);
+                                const title = `📦 New Order #${shortId}`;
+                                const body =
+                                    `From: ${customerName} · Items: ${items} · Total: ${formatLE(total)}\nTap to view in admin panel.`;
+
+                                // Send notification
+                                sendNotification(title, body);
+
+                                // Also show toast
+                                showToast(`🛍️ New order from ${customerName} — ${formatLE(total)}`);
+                            }
+                        }
+                    }
+
+                    // Update UI
+                    renderOrders();
+                    updateBadges();
+
+                    // Mark initial load as complete
+                    isInitialOrderLoad = false;
+
+                } else {
+                    // No data — reset
+                    lastKnownOrderKeys = new Set();
+                    allOrders = [];
+                    renderOrders();
+                    updateBadges();
+                    isInitialOrderLoad = false;
+                }
             });
         }
 
@@ -3273,6 +3351,15 @@
 
             // Set initial tab
             switchTab('orders');
+
+            // If notifications are already granted, send a test notification after a short delay
+            if (Notification.permission === 'granted') {
+                notifPermissionGranted = true;
+                updateNotifBanner();
+                setTimeout(() => {
+                    sendTestNotification();
+                }, 800);
+            }
         }
 
         document.addEventListener('DOMContentLoaded', init);

@@ -1498,6 +1498,45 @@
         .btn-print-png i {
             font-size: 0.7rem;
         }
+
+        /* Notification permission banner */
+        .notif-banner {
+            background: #f0f4ff;
+            border: 1px solid #b3d4ff;
+            border-radius: 10px;
+            padding: 0.8rem 1.2rem;
+            margin-bottom: 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+        }
+        .notif-banner .notif-text {
+            font-size: 0.85rem;
+            color: #1a3a6a;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .notif-banner .notif-btn {
+            background: #1a3a6a;
+            color: #fff;
+            border: none;
+            padding: 0.4rem 1.2rem;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .notif-banner .notif-btn:hover {
+            background: #0f2a4a;
+        }
+        .notif-banner .notif-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -1567,6 +1606,12 @@
                     <i class="fas fa-plus"></i> Add Product
                 </button>
             </div>
+        </div>
+
+        <!-- ─── NOTIFICATION BANNER ─── -->
+        <div class="notif-banner" id="notifBanner">
+            <span class="notif-text"><i class="fas fa-bell"></i> Get instant notifications on your phone when a new order is placed.</span>
+            <button class="notif-btn" id="notifGrantBtn">🔔 Enable Notifications</button>
         </div>
 
         <!-- ─── SECTION TABS ─── -->
@@ -1843,6 +1888,9 @@
         };
         let currentColors = { ...FALLBACK_COLORS };
 
+        // ─── NOTIFICATION STATE ────────────────────────────────
+        let notifPermissionGranted = false;
+
         // ─── STATE ────────────────────────────────────────────────
         let allProducts = [];
         let allCategories = [];
@@ -1922,6 +1970,83 @@
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') closeImageLightbox();
         });
+
+        // ─── NOTIFICATIONS ─────────────────────────────────────────
+        function requestNotificationPermission() {
+            if (!('Notification' in window)) {
+                showToast('This browser does not support notifications.');
+                return;
+            }
+            if (Notification.permission === 'granted') {
+                notifPermissionGranted = true;
+                updateNotifBanner();
+                showToast('✅ Notifications already enabled.');
+                return;
+            }
+            if (Notification.permission === 'denied') {
+                showToast('Notifications were denied. Please enable them in browser settings.');
+                return;
+            }
+            Notification.requestPermission().then(perm => {
+                if (perm === 'granted') {
+                    notifPermissionGranted = true;
+                    updateNotifBanner();
+                    showToast('✅ Notifications enabled! You will get alerts for new orders.');
+                    // Send a test notification
+                    sendNotification('🔔 Notifications active', 'selva admin will notify you on new orders.');
+                } else {
+                    showToast('❌ Notification permission denied.');
+                }
+            });
+        }
+
+        function sendNotification(title, body) {
+            if (!notifPermissionGranted && Notification.permission === 'granted') {
+                notifPermissionGranted = true;
+                updateNotifBanner();
+            }
+            if (notifPermissionGranted && 'Notification' in window && Notification.permission === 'granted') {
+                try {
+                    const notif = new Notification(title, {
+                        body: body || 'New activity in your store.',
+                        icon: 'https://picsum.photos/seed/selva/64/64',
+                        tag: 'selva-order',
+                        requireInteraction: true,
+                    });
+                    setTimeout(() => notif.close(), 8000);
+                } catch (e) {
+                    console.warn('Notification error:', e);
+                }
+            } else {
+                // fallback: show toast
+                showToast('🔔 ' + title + ' — ' + body);
+            }
+        }
+
+        function updateNotifBanner() {
+            const banner = document.getElementById('notifBanner');
+            const btn = document.getElementById('notifGrantBtn');
+            if (!banner || !btn) return;
+            if (notifPermissionGranted || Notification.permission === 'granted') {
+                banner.style.background = '#e8f5e9';
+                banner.style.borderColor = '#a5d6a7';
+                banner.querySelector('.notif-text').innerHTML = '<i class="fas fa-check-circle" style="color:#2e7d32;"></i> Notifications enabled – you\'ll receive alerts for new orders.';
+                btn.textContent = '✅ Enabled';
+                btn.disabled = true;
+            } else if (Notification.permission === 'denied') {
+                banner.style.background = '#ffebee';
+                banner.style.borderColor = '#ef9a9a';
+                banner.querySelector('.notif-text').innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#c62828;"></i> Notifications blocked. Please allow in browser settings.';
+                btn.textContent = '🔔 Retry';
+                btn.disabled = false;
+            } else {
+                banner.style.background = '#f0f4ff';
+                banner.style.borderColor = '#b3d4ff';
+                banner.querySelector('.notif-text').innerHTML = '<i class="fas fa-bell"></i> Get instant notifications on your phone when a new order is placed.';
+                btn.textContent = '🔔 Enable Notifications';
+                btn.disabled = false;
+            }
+        }
 
         // ─── LOAD DATA ────────────────────────────────────────────
         async function loadCategoriesFromFirebase() {
@@ -2064,7 +2189,6 @@
                 if (value) root.style.setProperty(key, value);
             }
             currentColors = { ...colors };
-            // Update sidebar brand and active states
             const brandIcon = document.querySelector('.sidebar-brand .brand-icon');
             const activeLinks = document.querySelectorAll('.sidebar-nav a.active, .tab-btn.active');
             if (brandIcon && colors['--color-1']) {
@@ -2078,13 +2202,11 @@
                     el.style.background = colors['--color-1'];
                 }
             });
-            // Also update any btn-primary
             document.querySelectorAll('.btn-primary').forEach(btn => {
                 if (colors['--color-1']) {
                     btn.style.background = colors['--color-1'];
                 }
             });
-            // Update header add product button
             const headerBtn = document.getElementById('headerAddProduct');
             if (headerBtn && colors['--color-1']) {
                 headerBtn.style.background = colors['--color-1'];
@@ -2155,18 +2277,17 @@
                 const value = currentColors[key] || FALLBACK_COLORS[key];
                 const label = displayNames[key] || key.replace(/^--/, '').replace(/-/g, ' ');
                 return `
-                    <div class="color-row" data-key="${key}">
-                        <span class="color-label">${label}</span>
-                        <div class="color-controls">
-                            <input type="color" id="colorPick_${key}" value="${value}" data-key="${key}" />
-                            <input type="text" id="colorText_${key}" value="${value}" data-key="${key}" placeholder="#000000" />
-                            <div class="color-preview" id="colorPrev_${key}" style="background:${value};"></div>
+                        <div class="color-row" data-key="${key}">
+                            <span class="color-label">${label}</span>
+                            <div class="color-controls">
+                                <input type="color" id="colorPick_${key}" value="${value}" data-key="${key}" />
+                                <input type="text" id="colorText_${key}" value="${value}" data-key="${key}" placeholder="#000000" />
+                                <div class="color-preview" id="colorPrev_${key}" style="background:${value};"></div>
+                            </div>
                         </div>
-                    </div>
-                `;
+                    `;
             }).join('');
 
-            // Bind events
             document.querySelectorAll('[id^="colorPick_"]').forEach(input => {
                 input.addEventListener('input', (e) => {
                     const key = e.target.dataset.key;
@@ -2927,8 +3048,66 @@
             document.getElementById('sidebarOverlay').classList.remove('open');
         }
 
+        // ─── LISTEN FOR NEW ORDERS (REAL-TIME) ──────────────────
+        function listenForNewOrders() {
+            const ordersRef = db.ref('orders');
+            let initialLoad = true;
+            let lastKnownOrderKeys = new Set();
+
+            ordersRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                const newOrders = [];
+                if (data) {
+                    const entries = Object.entries(data);
+                    entries.forEach(([key, val]) => {
+                        if (!lastKnownOrderKeys.has(key)) {
+                            newOrders.push({ ...val, _key: key });
+                        }
+                    });
+                    // Update the set with all current keys
+                    lastKnownOrderKeys = new Set(entries.map(([k]) => k));
+                } else {
+                    lastKnownOrderKeys = new Set();
+                }
+
+                // If it's not the initial load and we have new orders, send notifications
+                if (!initialLoad && newOrders.length > 0) {
+                    newOrders.forEach(order => {
+                        const customerName = order.customer?.name || 'Someone';
+                        const total = order.total || 0;
+                        const items = order.items?.length || 0;
+                        const msg =
+                            `🛍️ New order from ${customerName}\nItems: ${items} · Total: ${formatLE(total)}\nTap to view.`;
+                        sendNotification(`📦 New Order #${order._key.slice(-8)}`, msg);
+                        // Also show toast
+                        showToast(`🛍️ New order from ${customerName} — ${formatLE(total)}`);
+                    });
+                }
+
+                // Update orders list
+                if (data) {
+                    allOrders = Object.entries(data).map(([key, val]) => ({ ...val, _key: key }));
+                    allOrders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                } else {
+                    allOrders = [];
+                }
+                renderOrders();
+                updateBadges();
+
+                initialLoad = false;
+            });
+        }
+
         // ─── INIT ──────────────────────────────────────────────────
         async function init() {
+            // Check notification permission state
+            if ('Notification' in window) {
+                if (Notification.permission === 'granted') {
+                    notifPermissionGranted = true;
+                }
+                updateNotifBanner();
+            }
+
             await loadCategoriesFromFirebase();
             await loadProductsFromFirebase();
             await loadOrdersFromFirebase();
@@ -3075,6 +3254,9 @@
                 }
             });
 
+            // ─── NOTIFICATION BUTTON ─────────────────────────────
+            document.getElementById('notifGrantBtn').addEventListener('click', requestNotificationPermission);
+
             // Listen for color changes from other tabs
             db.ref('settings/colors').on('value', (snap) => {
                 const data = snap.val();
@@ -3086,6 +3268,10 @@
                 }
             });
 
+            // ─── START REAL-TIME ORDER LISTENER ─────────────────
+            listenForNewOrders();
+
+            // Set initial tab
             switchTab('orders');
         }
 

@@ -6,9 +6,12 @@
     <title>selva · Admin Panel</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&display=swap" rel="stylesheet" />
+    <!-- Firebase (Compat) + Messaging -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js">
     </script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js">
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js">
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js">
     </script>
@@ -1666,7 +1669,7 @@
                 <button class="btn btn-primary" id="headerAddProduct" style="display:none;">
                     <i class="fas fa-plus"></i> Add Product
                 </button>
-                <span class="push-status" id="pushStatusBadge"><span class="dot"></span> Push: Inactive</span>
+                <span class="push-status" id="pushStatusBadge"><span class="dot"></span> FCM: Inactive</span>
             </div>
         </div>
 
@@ -1920,19 +1923,26 @@
     <div class="receipt-wrapper" id="receiptContainer"></div>
 
     <script>
-        // ─── FIREBASE CONFIG (swlv-cb889) ──────────────────────
+        // ─── FIREBASE CONFIG (NEW) ──────────────────────────────
+        // Using the config you provided – it points to the same project.
         const firebaseConfig = {
-            apiKey: "AIzaSyCgnyiy4kPq4Px4TawYHhX9mzSkJTDG5j0",
+            apiKey: "AIzaSyCOo6whQfI8Q9j6kBpgs_rCwkfLeTur6ZU",
             authDomain: "swlv-cb889.firebaseapp.com",
             databaseURL: "https://swlv-cb889-default-rtdb.firebaseio.com",
             projectId: "swlv-cb889",
-            storageBucket: "swlv-cb889.appspot.com",
-            messagingSenderId: "951705393958",
-            appId: "1:951705393958:web:356f923ad3ed8786909ed1"
+            storageBucket: "swlv-cb889.firebasestorage.app",
+            messagingSenderId: "294988468079",
+            appId: "1:294988468079:web:4326c551ab4dcb11c8a29a",
+            measurementId: "G-R7H99X9YEG"
         };
 
+        const VAPID_KEY =
+            "BE2iObSu7mlvraSXastNJYe_IlN0iowHcK2rC7UrlxbiCxAYnRQsOF6iwsWbA7EX8jRf-q9J3jOsidqWt81j9cc";
+
+        // ─── INIT FIREBASE ──────────────────────────────────────
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
+        const messaging = firebase.messaging();
 
         // ─── IMGBB API KEY ────────────────────────────────────────
         const IMGBB_API_KEY = '01d6888db0d60176bec6e64465e8783e';
@@ -1950,11 +1960,9 @@
         };
         let currentColors = { ...FALLBACK_COLORS };
 
-        // ─── PUSH NOTIFICATION STATE ────────────────────────────
-        let pushSubscription = null;
-        let swRegistration = null;
-        const VAPID_PUBLIC_KEY =
-            'BEl62iUYgUvxI4h6x6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0';
+        // ─── FCM STATE ────────────────────────────────────────────
+        let fcmToken = null;
+        let tokenSaved = false;
 
         // ─── STATE ────────────────────────────────────────────────
         let allProducts = [];
@@ -2036,189 +2044,90 @@
             if (e.key === 'Escape') closeImageLightbox();
         });
 
-        // ─── SERVICE WORKER ──────────────────────────────────────
-        function getServiceWorkerCode() {
-            return `
-                    // selva push service worker
-                    self.addEventListener('install', (e) => {
-                        self.skipWaiting();
-                    });
-                    self.addEventListener('activate', (e) => {
-                        e.waitUntil(clients.claim());
-                    });
-                    self.addEventListener('push', (e) => {
-                        let data = { title: 'selva', body: 'New update from your store.' };
-                        try {
-                            if (e.data) {
-                                const parsed = e.data.json();
-                                if (parsed) data = parsed;
-                            }
-                        } catch (err) {}
-                        const options = {
-                            body: data.body || 'New update from your store.',
-                            icon: data.icon || 'https://picsum.photos/seed/selva/64/64',
+        // ─── FCM: GET TOKEN ──────────────────────────────────────
+        async function getFCMToken() {
+            try {
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') {
+                    console.warn('Notification permission denied.');
+                    return null;
+                }
+
+                // Get token using the VAPID key
+                const token = await messaging.getToken({ vapidKey: VAPID_KEY });
+                if (token) {
+                    fcmToken = token;
+                    await saveTokenToDatabase(token);
+                    updatePushStatus(true);
+                    return token;
+                } else {
+                    console.warn('No FCM token received.');
+                    return null;
+                }
+            } catch (err) {
+                console.error('Error getting FCM token:', err);
+                return null;
+            }
+        }
+
+        async function saveTokenToDatabase(token) {
+            if (!token) return;
+            try {
+                // Save under a path like adminTokens/{timestamp}
+                const ref = db.ref('adminTokens').push();
+                await ref.set({
+                    token: token,
+                    createdAt: Date.now(),
+                    userAgent: navigator.userAgent
+                });
+                tokenSaved = true;
+                console.log('FCM token saved in database.');
+            } catch (err) {
+                console.error('Failed to save FCM token:', err);
+            }
+        }
+
+        // ─── FCM: FOREGROUND MESSAGE HANDLING ────────────────────
+        function setupForegroundMessageHandler() {
+            messaging.onMessage((payload) => {
+                console.log('Foreground FCM message:', payload);
+                const notification = payload.notification || {};
+                const title = notification.title || 'New Order';
+                const body = notification.body || 'A new order has been placed.';
+                const icon = notification.icon || 'https://picsum.photos/seed/selva/64/64';
+
+                // Show a toast notification (admin panel is in foreground)
+                showToast(`🔔 ${title}: ${body}`);
+
+                // Also show a system notification (optional)
+                if (Notification.permission === 'granted') {
+                    navigator.serviceWorker.ready.then((sw) => {
+                        sw.showNotification(title, {
+                            body: body,
+                            icon: icon,
                             badge: 'https://picsum.photos/seed/selva/72/72',
                             vibrate: [200, 100, 200],
-                            tag: 'selva-push',
+                            tag: 'fcm-foreground',
                             requireInteraction: true,
-                            data: {
-                                url: data.url || '/'
-                            }
-                        };
-                        e.waitUntil(
-                            self.registration.showNotification(data.title || 'selva', options)
-                        );
+                            data: { url: '/' }
+                        });
                     });
-                    self.addEventListener('notificationclick', (e) => {
-                        e.notification.close();
-                        const url = e.notification.data?.url || '/';
-                        e.waitUntil(
-                            clients.matchAll({ type: 'window' }).then((clientList) => {
-                                for (const client of clientList) {
-                                    if (client.url === url && 'focus' in client) {
-                                        return client.focus();
-                                    }
-                                }
-                                if (clients.openWindow) return clients.openWindow(url);
-                            })
-                        );
-                    });
-                `;
-        }
-
-        async function registerServiceWorker() {
-            try {
-                const swCode = getServiceWorkerCode();
-                const blob = new Blob([swCode], { type: 'application/javascript' });
-                const swUrl = URL.createObjectURL(blob);
-                const registration = await navigator.serviceWorker.register(swUrl, {
-                    scope: '/',
-                    type: 'classic'
-                });
-                swRegistration = registration;
-                console.log('Service worker registered successfully.');
-                return registration;
-            } catch (err) {
-                console.error('SW registration failed:', err);
-                return null;
-            }
-        }
-
-        // ─── PUSH NOTIFICATIONS ──────────────────────────────────
-        async function subscribeToPush() {
-            if (!swRegistration) {
-                console.warn('No SW registration.');
-                return null;
-            }
-            try {
-                const existing = await swRegistration.pushManager.getSubscription();
-                if (existing) {
-                    pushSubscription = existing;
-                    updatePushStatus(true);
-                    return existing;
                 }
-                const subscription = await swRegistration.pushManager.subscribe({
-                    userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-                });
-                pushSubscription = subscription;
-                updatePushStatus(true);
-                // Store subscription in Firebase for server-side sending
-                await db.ref('pushSubscriptions').push({
-                    endpoint: subscription.endpoint,
-                    keys: {
-                        p256dh: btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey(
-                        'p256dh')))),
-                        auth: btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('auth'))))
-                    },
-                    createdAt: Date.now()
-                });
-                console.log('Push subscription successful.');
-                return subscription;
-            } catch (err) {
-                console.error('Push subscription error:', err);
-                updatePushStatus(false);
-                return null;
-            }
+            });
         }
 
-        function urlBase64ToUint8Array(base64String) {
-            const padding = '='.repeat((4 - base64String.length % 4) % 4);
-            const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
-            const rawData = window.atob(base64);
-            const outputArray = new Uint8Array(rawData.length);
-            for (let i = 0; i < rawData.length; ++i) {
-                outputArray[i] = rawData.charCodeAt(i);
-            }
-            return outputArray;
-        }
-
-        async function sendTestPushNotification() {
-            if (!pushSubscription) {
-                // Try to subscribe first
-                const sub = await subscribeToPush();
-                if (!sub) {
-                    showToast('❌ Cannot send test: no push subscription.');
-                    return;
-                }
-            }
-
-            // Show a local notification via the service worker
-            if (swRegistration) {
-                try {
-                    await swRegistration.showNotification('🔔 selva · Test Push Notification', {
-                        body: '✅ Push notifications are working! You will now receive real-time alerts for new orders.',
-                        icon: 'https://picsum.photos/seed/selva/64/64',
-                        badge: 'https://picsum.photos/seed/selva/72/72',
-                        vibrate: [200, 100, 200],
-                        tag: 'selva-test',
-                        requireInteraction: true,
-                        data: { url: '/' }
-                    });
-                    showToast('📱 Test push notification sent!');
-                } catch (err) {
-                    console.error('Test notification error:', err);
-                    showToast('❌ Failed to send test notification.');
-                }
-            } else {
-                showToast('⚠️ Service worker not ready. Please try again.');
-            }
-        }
-
+        // ─── PUSH STATUS UI ──────────────────────────────────────
         function updatePushStatus(active) {
             const badge = document.getElementById('pushStatusBadge');
             if (!badge) return;
             if (active) {
                 badge.className = 'push-status active';
-                badge.innerHTML = '<span class="dot"></span> Push: Active';
+                badge.innerHTML = '<span class="dot"></span> FCM: Active';
             } else {
                 badge.className = 'push-status';
-                badge.innerHTML = '<span class="dot"></span> Push: Inactive';
+                badge.innerHTML = '<span class="dot"></span> FCM: Inactive';
             }
-        }
-
-        async function checkPushSubscription() {
-            try {
-                if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-                    updatePushStatus(false);
-                    return false;
-                }
-                const reg = await navigator.serviceWorker.ready;
-                swRegistration = reg;
-                const sub = await reg.pushManager.getSubscription();
-                if (sub) {
-                    pushSubscription = sub;
-                    updatePushStatus(true);
-                    return true;
-                } else {
-                    updatePushStatus(false);
-                    return false;
-                }
-            } catch (err) {
-                console.warn('Push check error:', err);
-                updatePushStatus(false);
-                return false;
-            }
+            updateNotifBanner();
         }
 
         // ─── NOTIFICATION BANNER ─────────────────────────────────
@@ -2227,16 +2136,16 @@
             const btn = document.getElementById('notifGrantBtn');
             if (!banner || !btn) return;
 
-            const isPushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
+            const isSupported = 'Notification' in window && 'serviceWorker' in navigator;
 
-            if (pushSubscription) {
+            if (fcmToken && tokenSaved) {
                 banner.style.background = '#e8f5e9';
                 banner.style.borderColor = '#a5d6a7';
                 banner.querySelector('.notif-text').innerHTML =
                     '<i class="fas fa-check-circle" style="color:#2e7d32;"></i> ✅ Push notifications enabled – you\'ll receive alerts for new orders.';
                 btn.textContent = '✅ Enabled';
                 btn.disabled = true;
-            } else if (!isPushSupported) {
+            } else if (!isSupported) {
                 banner.style.background = '#ffebee';
                 banner.style.borderColor = '#ef9a9a';
                 banner.querySelector('.notif-text').innerHTML =
@@ -2260,8 +2169,9 @@
             }
         }
 
+        // ─── HANDLE ENABLE PUSH ──────────────────────────────────
         async function handleEnablePush() {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            if (!('Notification' in window) || !('serviceWorker' in navigator)) {
                 showToast('❌ Push notifications are not supported in this browser.');
                 return;
             }
@@ -2271,43 +2181,19 @@
                 return;
             }
 
-            if (pushSubscription) {
+            if (fcmToken && tokenSaved) {
                 showToast('✅ Push notifications already enabled.');
                 return;
             }
 
             try {
-                // Request permission
-                let perm = Notification.permission;
-                if (perm !== 'granted') {
-                    perm = await Notification.requestPermission();
-                }
-                if (perm !== 'granted') {
-                    showToast('❌ Permission denied. Cannot enable push notifications.');
+                // Request permission and get token
+                const token = await getFCMToken();
+                if (token) {
+                    showToast('✅ Push notifications enabled! You will now receive order alerts.');
                     updateNotifBanner();
-                    return;
-                }
-
-                // Register SW if not already
-                if (!swRegistration) {
-                    const reg = await registerServiceWorker();
-                    if (!reg) {
-                        showToast('❌ Service worker registration failed.');
-                        return;
-                    }
-                }
-
-                // Subscribe to push
-                const sub = await subscribeToPush();
-                if (sub) {
-                    showToast('✅ Push notifications enabled! Sending test message...');
-                    updateNotifBanner();
-                    // Send test notification after a short delay
-                    setTimeout(() => {
-                        sendTestPushNotification();
-                    }, 600);
                 } else {
-                    showToast('❌ Push subscription failed. Please try again.');
+                    showToast('❌ Failed to get FCM token. Please try again.');
                 }
             } catch (err) {
                 console.error('Enable push error:', err);
@@ -3341,6 +3227,7 @@
                     allOrders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
                     if (!isInitialOrderLoad && newOrderKeys.length > 0) {
+                        // New orders detected – show a toast (the FCM notification will be sent by the Cloud Function)
                         for (const key of newOrderKeys) {
                             const order = allOrders.find(o => o._key === key);
                             if (order) {
@@ -3348,29 +3235,7 @@
                                 const total = order.total || 0;
                                 const items = order.items?.length || 0;
                                 const shortId = key.slice(-8);
-                                const title = `📦 New Order #${shortId}`;
-                                const body =
-                                    `From: ${customerName} · Items: ${items} · Total: ${formatLE(total)}\nTap to view in admin panel.`;
-
-                                // Send push notification if available
-                                if (pushSubscription) {
-                                    // Use SW to show notification
-                                    if (swRegistration) {
-                                        try {
-                                            swRegistration.showNotification(title, {
-                                                body: body,
-                                                icon: 'https://picsum.photos/seed/selva/64/64',
-                                                badge: 'https://picsum.photos/seed/selva/72/72',
-                                                vibrate: [200, 100, 200],
-                                                tag: `order-${key}`,
-                                                requireInteraction: true,
-                                                data: { url: '/' }
-                                            });
-                                        } catch (e) {}
-                                    }
-                                }
-
-                                showToast(`🛍️ New order from ${customerName} — ${formatLE(total)}`);
+                                showToast(`🛍️ New Order #${shortId} from ${customerName} — ${formatLE(total)}`);
                             }
                         }
                     }
@@ -3391,25 +3256,7 @@
 
         // ─── INIT ──────────────────────────────────────────────────
         async function init() {
-            // Check push notification support
-            if ('serviceWorker' in navigator && 'PushManager' in window) {
-                try {
-                    // Register SW early
-                    const reg = await registerServiceWorker();
-                    if (reg) {
-                        swRegistration = reg;
-                        // Check for existing subscription
-                        const sub = await reg.pushManager.getSubscription();
-                        if (sub) {
-                            pushSubscription = sub;
-                            updatePushStatus(true);
-                        }
-                    }
-                } catch (err) {
-                    console.warn('SW init error:', err);
-                }
-            }
-
+            // 1. Load all data
             await loadCategoriesFromFirebase();
             await loadProductsFromFirebase();
             await loadOrdersFromFirebase();
@@ -3417,6 +3264,7 @@
             await loadShippingRates();
             await loadColorsFromFirebase();
 
+            // 2. Render UI
             renderOrders();
             renderProductList();
             renderCategories();
@@ -3425,7 +3273,28 @@
             populateCategorySelect();
             renderColorRows();
             updateBadges();
+
+            // 3. FCM: Request permission and get token (if user previously allowed)
+            //    We'll call getFCMToken() only when the user clicks "Enable"
+            //    but we can try to recover an existing token silently.
+            try {
+                const token = await messaging.getToken({ vapidKey: VAPID_KEY });
+                if (token) {
+                    fcmToken = token;
+                    await saveTokenToDatabase(token);
+                    updatePushStatus(true);
+                    console.log('FCM token restored:', token);
+                } else {
+                    updatePushStatus(false);
+                }
+            } catch (err) {
+                console.warn('Could not restore FCM token:', err);
+                updatePushStatus(false);
+            }
             updateNotifBanner();
+
+            // 4. Setup foreground message handler
+            setupForegroundMessageHandler();
 
             // ─── EVENT BINDINGS ──────────────────────────────────
 
@@ -3560,7 +3429,7 @@
             // ─── PUSH NOTIFICATION BUTTON ──────────────────────
             document.getElementById('notifGrantBtn').addEventListener('click', handleEnablePush);
 
-            // Listen for color changes from other tabs
+            // ─── COLOR LISTENER ──────────────────────────────────
             db.ref('settings/colors').on('value', (snap) => {
                 const data = snap.val();
                 if (data) {
@@ -3576,17 +3445,6 @@
 
             // Set initial tab
             switchTab('orders');
-
-            // If push is already active, update banner
-            if (pushSubscription) {
-                updateNotifBanner();
-                // Send a test notification after a short delay if this is a fresh session
-                setTimeout(() => {
-                    if (pushSubscription) {
-                        sendTestPushNotification();
-                    }
-                }, 1000);
-            }
         }
 
         document.addEventListener('DOMContentLoaded', init);

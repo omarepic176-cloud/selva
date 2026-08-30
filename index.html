@@ -1569,6 +1569,35 @@
                 transform: scale(0.8);
             }
         }
+
+        /* ─── PUSH STATUS BADGE ─── */
+        .push-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.7rem;
+            font-weight: 500;
+            padding: 0.15rem 0.7rem;
+            border-radius: 20px;
+            background: #f0f0f0;
+            color: #666;
+            border: 1px solid #e0e0e0;
+        }
+        .push-status.active {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-color: #a5d6a7;
+        }
+        .push-status.active .dot {
+            background: #2e7d32;
+        }
+        .push-status .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #999;
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
@@ -1637,13 +1666,14 @@
                 <button class="btn btn-primary" id="headerAddProduct" style="display:none;">
                     <i class="fas fa-plus"></i> Add Product
                 </button>
+                <span class="push-status" id="pushStatusBadge"><span class="dot"></span> Push: Inactive</span>
             </div>
         </div>
 
         <!-- ─── NOTIFICATION BANNER ─── -->
         <div class="notif-banner" id="notifBanner">
-            <span class="notif-text"><i class="fas fa-bell"></i> Get instant notifications on your phone when a new order is placed.</span>
-            <button class="notif-btn" id="notifGrantBtn">🔔 Enable Notifications</button>
+            <span class="notif-text"><i class="fas fa-bell"></i> Get instant push notifications on your phone when a new order is placed.</span>
+            <button class="notif-btn" id="notifGrantBtn">🔔 Enable Push Notifications</button>
         </div>
 
         <!-- ─── SECTION TABS ─── -->
@@ -1920,8 +1950,11 @@
         };
         let currentColors = { ...FALLBACK_COLORS };
 
-        // ─── NOTIFICATION STATE ────────────────────────────────
-        let notifPermissionGranted = false;
+        // ─── PUSH NOTIFICATION STATE ────────────────────────────
+        let pushSubscription = null;
+        let swRegistration = null;
+        const VAPID_PUBLIC_KEY =
+            'BEl62iUYgUvxI4h6x6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0h1h2h3h4h5h6h7h8h9h0';
 
         // ─── STATE ────────────────────────────────────────────────
         let allProducts = [];
@@ -2003,93 +2036,212 @@
             if (e.key === 'Escape') closeImageLightbox();
         });
 
-        // ─── NOTIFICATIONS ─────────────────────────────────────────
-        function requestNotificationPermission() {
-            if (!('Notification' in window)) {
-                showToast('This browser does not support notifications.');
-                return;
-            }
-            if (Notification.permission === 'granted') {
-                notifPermissionGranted = true;
-                updateNotifBanner();
-                // Send test notification immediately
-                sendTestNotification();
-                showToast('✅ Notifications already enabled. Test message sent!');
-                return;
-            }
-            if (Notification.permission === 'denied') {
-                showToast('Notifications were denied. Please enable them in browser settings.');
-                return;
-            }
-            Notification.requestPermission().then(perm => {
-                if (perm === 'granted') {
-                    notifPermissionGranted = true;
-                    updateNotifBanner();
-                    showToast('✅ Notifications enabled! Sending test message...');
-                    // Send test notification after a short delay
-                    setTimeout(() => {
-                        sendTestNotification();
-                    }, 400);
-                } else {
-                    showToast('❌ Notification permission denied.');
-                }
-            });
-        }
-
-        function sendTestNotification() {
-            const title = '🔔 selva · Test Notification';
-            const body = '✅ Notifications are working! You will now receive real-time alerts for new orders.';
-            sendNotification(title, body);
-            // Also show a toast
-            showToast('📱 Test notification sent to your device!');
-        }
-
-        function sendNotification(title, body) {
-            // Update permission state
-            if ('Notification' in window && Notification.permission === 'granted') {
-                notifPermissionGranted = true;
-                updateNotifBanner();
-            }
-
-            // Always try to send
-            if (notifPermissionGranted && 'Notification' in window && Notification.permission === 'granted') {
-                try {
-                    const notif = new Notification(title, {
-                        body: body || 'New activity in your store.',
-                        icon: 'https://picsum.photos/seed/selva/64/64',
-                        tag: 'selva-order',
-                        requireInteraction: true,
-                        vibrate: [200, 100, 200],
-                        silent: false,
+        // ─── SERVICE WORKER ──────────────────────────────────────
+        function getServiceWorkerCode() {
+            return `
+                    // selva push service worker
+                    self.addEventListener('install', (e) => {
+                        self.skipWaiting();
                     });
-                    // Auto-close after 10 seconds
-                    setTimeout(() => {
-                        try { notif.close(); } catch (e) {}
-                    }, 10000);
-                    return true;
-                } catch (e) {
-                    console.warn('Notification error:', e);
-                    // Fallback to toast
-                    showToast('🔔 ' + title + ' — ' + body);
-                    return false;
+                    self.addEventListener('activate', (e) => {
+                        e.waitUntil(clients.claim());
+                    });
+                    self.addEventListener('push', (e) => {
+                        let data = { title: 'selva', body: 'New update from your store.' };
+                        try {
+                            if (e.data) {
+                                const parsed = e.data.json();
+                                if (parsed) data = parsed;
+                            }
+                        } catch (err) {}
+                        const options = {
+                            body: data.body || 'New update from your store.',
+                            icon: data.icon || 'https://picsum.photos/seed/selva/64/64',
+                            badge: 'https://picsum.photos/seed/selva/72/72',
+                            vibrate: [200, 100, 200],
+                            tag: 'selva-push',
+                            requireInteraction: true,
+                            data: {
+                                url: data.url || '/'
+                            }
+                        };
+                        e.waitUntil(
+                            self.registration.showNotification(data.title || 'selva', options)
+                        );
+                    });
+                    self.addEventListener('notificationclick', (e) => {
+                        e.notification.close();
+                        const url = e.notification.data?.url || '/';
+                        e.waitUntil(
+                            clients.matchAll({ type: 'window' }).then((clientList) => {
+                                for (const client of clientList) {
+                                    if (client.url === url && 'focus' in client) {
+                                        return client.focus();
+                                    }
+                                }
+                                if (clients.openWindow) return clients.openWindow(url);
+                            })
+                        );
+                    });
+                `;
+        }
+
+        async function registerServiceWorker() {
+            try {
+                const swCode = getServiceWorkerCode();
+                const blob = new Blob([swCode], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(blob);
+                const registration = await navigator.serviceWorker.register(swUrl, {
+                    scope: '/',
+                    type: 'classic'
+                });
+                swRegistration = registration;
+                console.log('Service worker registered successfully.');
+                return registration;
+            } catch (err) {
+                console.error('SW registration failed:', err);
+                return null;
+            }
+        }
+
+        // ─── PUSH NOTIFICATIONS ──────────────────────────────────
+        async function subscribeToPush() {
+            if (!swRegistration) {
+                console.warn('No SW registration.');
+                return null;
+            }
+            try {
+                const existing = await swRegistration.pushManager.getSubscription();
+                if (existing) {
+                    pushSubscription = existing;
+                    updatePushStatus(true);
+                    return existing;
+                }
+                const subscription = await swRegistration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+                });
+                pushSubscription = subscription;
+                updatePushStatus(true);
+                // Store subscription in Firebase for server-side sending
+                await db.ref('pushSubscriptions').push({
+                    endpoint: subscription.endpoint,
+                    keys: {
+                        p256dh: btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey(
+                        'p256dh')))),
+                        auth: btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('auth'))))
+                    },
+                    createdAt: Date.now()
+                });
+                console.log('Push subscription successful.');
+                return subscription;
+            } catch (err) {
+                console.error('Push subscription error:', err);
+                updatePushStatus(false);
+                return null;
+            }
+        }
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        async function sendTestPushNotification() {
+            if (!pushSubscription) {
+                // Try to subscribe first
+                const sub = await subscribeToPush();
+                if (!sub) {
+                    showToast('❌ Cannot send test: no push subscription.');
+                    return;
+                }
+            }
+
+            // Show a local notification via the service worker
+            if (swRegistration) {
+                try {
+                    await swRegistration.showNotification('🔔 selva · Test Push Notification', {
+                        body: '✅ Push notifications are working! You will now receive real-time alerts for new orders.',
+                        icon: 'https://picsum.photos/seed/selva/64/64',
+                        badge: 'https://picsum.photos/seed/selva/72/72',
+                        vibrate: [200, 100, 200],
+                        tag: 'selva-test',
+                        requireInteraction: true,
+                        data: { url: '/' }
+                    });
+                    showToast('📱 Test push notification sent!');
+                } catch (err) {
+                    console.error('Test notification error:', err);
+                    showToast('❌ Failed to send test notification.');
                 }
             } else {
-                // Fallback: show toast
-                showToast('🔔 ' + title + ' — ' + body);
+                showToast('⚠️ Service worker not ready. Please try again.');
+            }
+        }
+
+        function updatePushStatus(active) {
+            const badge = document.getElementById('pushStatusBadge');
+            if (!badge) return;
+            if (active) {
+                badge.className = 'push-status active';
+                badge.innerHTML = '<span class="dot"></span> Push: Active';
+            } else {
+                badge.className = 'push-status';
+                badge.innerHTML = '<span class="dot"></span> Push: Inactive';
+            }
+        }
+
+        async function checkPushSubscription() {
+            try {
+                if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                    updatePushStatus(false);
+                    return false;
+                }
+                const reg = await navigator.serviceWorker.ready;
+                swRegistration = reg;
+                const sub = await reg.pushManager.getSubscription();
+                if (sub) {
+                    pushSubscription = sub;
+                    updatePushStatus(true);
+                    return true;
+                } else {
+                    updatePushStatus(false);
+                    return false;
+                }
+            } catch (err) {
+                console.warn('Push check error:', err);
+                updatePushStatus(false);
                 return false;
             }
         }
 
+        // ─── NOTIFICATION BANNER ─────────────────────────────────
         function updateNotifBanner() {
             const banner = document.getElementById('notifBanner');
             const btn = document.getElementById('notifGrantBtn');
             if (!banner || !btn) return;
-            if (notifPermissionGranted || (Notification.permission === 'granted')) {
+
+            const isPushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
+
+            if (pushSubscription) {
                 banner.style.background = '#e8f5e9';
                 banner.style.borderColor = '#a5d6a7';
                 banner.querySelector('.notif-text').innerHTML =
-                    '<i class="fas fa-check-circle" style="color:#2e7d32;"></i> ✅ Notifications enabled – you\'ll receive alerts for new orders.';
+                    '<i class="fas fa-check-circle" style="color:#2e7d32;"></i> ✅ Push notifications enabled – you\'ll receive alerts for new orders.';
                 btn.textContent = '✅ Enabled';
+                btn.disabled = true;
+            } else if (!isPushSupported) {
+                banner.style.background = '#ffebee';
+                banner.style.borderColor = '#ef9a9a';
+                banner.querySelector('.notif-text').innerHTML =
+                    '<i class="fas fa-exclamation-triangle" style="color:#c62828;"></i> Push notifications not supported in this browser.';
+                btn.textContent = '⚠️ Unsupported';
                 btn.disabled = true;
             } else if (Notification.permission === 'denied') {
                 banner.style.background = '#ffebee';
@@ -2102,9 +2254,64 @@
                 banner.style.background = '#f0f4ff';
                 banner.style.borderColor = '#b3d4ff';
                 banner.querySelector('.notif-text').innerHTML =
-                    '<i class="fas fa-bell"></i> Get instant notifications on your phone when a new order is placed.';
-                btn.textContent = '🔔 Enable Notifications';
+                    '<i class="fas fa-bell"></i> Get instant push notifications on your phone when a new order is placed.';
+                btn.textContent = '🔔 Enable Push Notifications';
                 btn.disabled = false;
+            }
+        }
+
+        async function handleEnablePush() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                showToast('❌ Push notifications are not supported in this browser.');
+                return;
+            }
+
+            if (Notification.permission === 'denied') {
+                showToast('❌ Notifications were denied. Please enable them in browser settings.');
+                return;
+            }
+
+            if (pushSubscription) {
+                showToast('✅ Push notifications already enabled.');
+                return;
+            }
+
+            try {
+                // Request permission
+                let perm = Notification.permission;
+                if (perm !== 'granted') {
+                    perm = await Notification.requestPermission();
+                }
+                if (perm !== 'granted') {
+                    showToast('❌ Permission denied. Cannot enable push notifications.');
+                    updateNotifBanner();
+                    return;
+                }
+
+                // Register SW if not already
+                if (!swRegistration) {
+                    const reg = await registerServiceWorker();
+                    if (!reg) {
+                        showToast('❌ Service worker registration failed.');
+                        return;
+                    }
+                }
+
+                // Subscribe to push
+                const sub = await subscribeToPush();
+                if (sub) {
+                    showToast('✅ Push notifications enabled! Sending test message...');
+                    updateNotifBanner();
+                    // Send test notification after a short delay
+                    setTimeout(() => {
+                        sendTestPushNotification();
+                    }, 600);
+                } else {
+                    showToast('❌ Push subscription failed. Please try again.');
+                }
+            } catch (err) {
+                console.error('Enable push error:', err);
+                showToast('❌ Error enabling push: ' + err.message);
             }
         }
 
@@ -2337,15 +2544,15 @@
                 const value = currentColors[key] || FALLBACK_COLORS[key];
                 const label = displayNames[key] || key.replace(/^--/, '').replace(/-/g, ' ');
                 return `
-                        <div class="color-row" data-key="${key}">
-                            <span class="color-label">${label}</span>
-                            <div class="color-controls">
-                                <input type="color" id="colorPick_${key}" value="${value}" data-key="${key}" />
-                                <input type="text" id="colorText_${key}" value="${value}" data-key="${key}" placeholder="#000000" />
-                                <div class="color-preview" id="colorPrev_${key}" style="background:${value};"></div>
+                            <div class="color-row" data-key="${key}">
+                                <span class="color-label">${label}</span>
+                                <div class="color-controls">
+                                    <input type="color" id="colorPick_${key}" value="${value}" data-key="${key}" />
+                                    <input type="text" id="colorText_${key}" value="${value}" data-key="${key}" placeholder="#000000" />
+                                    <div class="color-preview" id="colorPrev_${key}" style="background:${value};"></div>
+                                </div>
                             </div>
-                        </div>
-                    `;
+                        `;
             }).join('');
 
             document.querySelectorAll('[id^="colorPick_"]').forEach(input => {
@@ -2415,53 +2622,53 @@
                 const orderKey = order._key || '';
 
                 return `
-                        <div class="order-item" data-order-key="${orderKey}">
-                            <div class="order-head">
-                                <span class="id">#${orderKey.slice(-8)}</span>
-                                <span class="status status-${statusClass}">${statusClass.toUpperCase()}</span>
+                            <div class="order-item" data-order-key="${orderKey}">
+                                <div class="order-head">
+                                    <span class="id">#${orderKey.slice(-8)}</span>
+                                    <span class="status status-${statusClass}">${statusClass.toUpperCase()}</span>
+                                </div>
+                                <div class="order-body">
+                                    <span class="customer"><i class="fas fa-user"></i> ${order.customer?.name || '—'}</span>
+                                    <span><i class="fas fa-phone"></i> ${order.customer?.phone || '—'}</span>
+                                    <span><i class="fas fa-map-marker-alt"></i> ${order.customer?.governorate || '—'}</span>
+                                    <div class="items-preview">${itemsPreview} ${moreItems}</div>
+                                    <span class="total">${formatLE(order.total || 0)}</span>
+                                </div>
+                                <div class="order-actions">
+                                    <select class="status-select" data-key="${orderKey}">
+                                        <option value="pending" ${order.status === 'pending' ? 'selected' : ''}>Pending</option>
+                                        <option value="processing" ${order.status === 'processing' ? 'selected' : ''}>Processing</option>
+                                        <option value="shipped" ${order.status === 'shipped' ? 'selected' : ''}>Shipped</option>
+                                        <option value="delivered" ${order.status === 'delivered' ? 'selected' : ''}>Delivered</option>
+                                        <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+                                    </select>
+                                    <button class="btn btn-primary btn-sm update-status-btn" data-key="${orderKey}">Update</button>
+                                    <button class="btn btn-danger btn-sm delete-order-btn" data-key="${orderKey}">Delete</button>
+                                    <a href="${waLink}" target="_blank" class="btn btn-success btn-sm whatsapp-btn" ${!phoneDigits ? 'disabled' : ''}>
+                                        <i class="fab fa-whatsapp"></i> WhatsApp
+                                    </a>
+                                    <button class="btn-print-png print-png-btn" data-key="${orderKey}" title="Download PNG receipt">
+                                        <i class="fas fa-image"></i> Print PNG
+                                    </button>
+                                    <span class="order-detail-toggle" data-key="${orderKey}">Show details</span>
+                                </div>
+                                <div class="order-detail" id="orderDetail_${orderKey}">
+                                    <strong>Customer:</strong> ${order.customer?.name || '—'}<br />
+                                    <strong>Phone:</strong> ${order.customer?.phone || '—'} ${order.customer?.phone2 ? '· ' + order.customer.phone2 : ''}<br />
+                                    <strong>Governorate:</strong> ${order.customer?.governorate || '—'}<br />
+                                    <strong>Address:</strong> ${order.customer?.address || '—'}<br />
+                                    ${order.customer?.note ? `<strong>Note:</strong> ${order.customer.note}<br />` : ''}
+                                    <strong>Subtotal:</strong> ${formatLE(order.subtotal || 0)}<br />
+                                    <strong>Shipping:</strong> ${formatLE(order.shipping || 0)}<br />
+                                    <strong>Total:</strong> ${formatLE(order.total || 0)}<br />
+                                    ${screenshotUrl ? `<strong>Payment Screenshot:</strong> <img src="${screenshotUrl}" class="screenshot-thumb" onclick="window.open('${screenshotUrl}','_blank')" /><br />` : ''}
+                                    <strong>Items:</strong><br />
+                                    ${order.items ? order.items.map(i => `
+                                        ${i.name} ×${i.quantity} (${i.color || 'Default'}, ${i.size || 'N/A'}) — ${formatLE(i.priceLE)}<br />
+                                    `).join('') : ''}
+                                </div>
                             </div>
-                            <div class="order-body">
-                                <span class="customer"><i class="fas fa-user"></i> ${order.customer?.name || '—'}</span>
-                                <span><i class="fas fa-phone"></i> ${order.customer?.phone || '—'}</span>
-                                <span><i class="fas fa-map-marker-alt"></i> ${order.customer?.governorate || '—'}</span>
-                                <div class="items-preview">${itemsPreview} ${moreItems}</div>
-                                <span class="total">${formatLE(order.total || 0)}</span>
-                            </div>
-                            <div class="order-actions">
-                                <select class="status-select" data-key="${orderKey}">
-                                    <option value="pending" ${order.status === 'pending' ? 'selected' : ''}>Pending</option>
-                                    <option value="processing" ${order.status === 'processing' ? 'selected' : ''}>Processing</option>
-                                    <option value="shipped" ${order.status === 'shipped' ? 'selected' : ''}>Shipped</option>
-                                    <option value="delivered" ${order.status === 'delivered' ? 'selected' : ''}>Delivered</option>
-                                    <option value="cancelled" ${order.status === 'cancelled' ? 'selected' : ''}>Cancelled</option>
-                                </select>
-                                <button class="btn btn-primary btn-sm update-status-btn" data-key="${orderKey}">Update</button>
-                                <button class="btn btn-danger btn-sm delete-order-btn" data-key="${orderKey}">Delete</button>
-                                <a href="${waLink}" target="_blank" class="btn btn-success btn-sm whatsapp-btn" ${!phoneDigits ? 'disabled' : ''}>
-                                    <i class="fab fa-whatsapp"></i> WhatsApp
-                                </a>
-                                <button class="btn-print-png print-png-btn" data-key="${orderKey}" title="Download PNG receipt">
-                                    <i class="fas fa-image"></i> Print PNG
-                                </button>
-                                <span class="order-detail-toggle" data-key="${orderKey}">Show details</span>
-                            </div>
-                            <div class="order-detail" id="orderDetail_${orderKey}">
-                                <strong>Customer:</strong> ${order.customer?.name || '—'}<br />
-                                <strong>Phone:</strong> ${order.customer?.phone || '—'} ${order.customer?.phone2 ? '· ' + order.customer.phone2 : ''}<br />
-                                <strong>Governorate:</strong> ${order.customer?.governorate || '—'}<br />
-                                <strong>Address:</strong> ${order.customer?.address || '—'}<br />
-                                ${order.customer?.note ? `<strong>Note:</strong> ${order.customer.note}<br />` : ''}
-                                <strong>Subtotal:</strong> ${formatLE(order.subtotal || 0)}<br />
-                                <strong>Shipping:</strong> ${formatLE(order.shipping || 0)}<br />
-                                <strong>Total:</strong> ${formatLE(order.total || 0)}<br />
-                                ${screenshotUrl ? `<strong>Payment Screenshot:</strong> <img src="${screenshotUrl}" class="screenshot-thumb" onclick="window.open('${screenshotUrl}','_blank')" /><br />` : ''}
-                                <strong>Items:</strong><br />
-                                ${order.items ? order.items.map(i => `
-                                    ${i.name} ×${i.quantity} (${i.color || 'Default'}, ${i.size || 'N/A'}) — ${formatLE(i.priceLE)}<br />
-                                `).join('') : ''}
-                            </div>
-                        </div>
-                    `;
+                        `;
             }).join('');
 
             container.querySelectorAll('.update-status-btn').forEach(btn => {
@@ -2538,14 +2745,14 @@
                     if (size) meta.push(size);
                     const metaStr = meta.length ? ` · ${meta.join(' · ')}` : '';
                     return `
-                            <div class="item-row">
-                                <div class="item-desc">
-                                    <span class="item-name">${name}</span>
-                                    <span class="item-meta">×${qty}${metaStr}</span>
+                                <div class="item-row">
+                                    <div class="item-desc">
+                                        <span class="item-name">${name}</span>
+                                        <span class="item-meta">×${qty}${metaStr}</span>
+                                    </div>
+                                    <span class="item-price">${formatLE(price * qty)}</span>
                                 </div>
-                                <span class="item-price">${formatLE(price * qty)}</span>
-                            </div>
-                        `;
+                            `;
                 }).join('');
             } else {
                 itemsHTML = `<div style="font-size:0.75rem;color:#999;padding:6px 0;">No items</div>`;
@@ -2559,36 +2766,36 @@
             const note = customer.note || '';
 
             return `
-                    <div class="receipt" id="receiptToCapture">
-                        <div class="receipt-header">
-                            <div class="brand">selva</div>
-                            <div class="order-id">Order #<span>${orderId}</span></div>
-                        </div>
-                        <div class="receipt-section">
-                            <div class="section-title">Customer Details</div>
-                            <div class="row"><span class="label">Name</span><span class="value">${name}</span></div>
-                            <div class="row"><span class="label">Phone</span><span class="value">${phone}${phone2 ? ' · ' + phone2 : ''}</span></div>
-                            <div class="row"><span class="label">Governorate</span><span class="value">${governorate}</span></div>
-                            <div class="row"><span class="label">Address</span><span class="value">${address}</span></div>
-                            ${note ? `<div class="row"><span class="label">Note</span><span class="value">${note}</span></div>` : ''}
-                        </div>
-                        <div class="receipt-items">
-                            <div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#999;margin-bottom:6px;">Order Items</div>
-                            ${itemsHTML}
-                        </div>
-                        <div class="receipt-totals">
-                            <div class="total-row"><span class="label">Subtotal</span><span class="value">${formatLE(subtotal)}</span></div>
-                            <div class="total-row"><span class="label">Shipping</span><span class="value">${formatLE(shipping)}</span></div>
-                            <div class="grand-total">
-                                <span>Total</span>
-                                <span>${formatLE(total)}</span>
+                        <div class="receipt" id="receiptToCapture">
+                            <div class="receipt-header">
+                                <div class="brand">selva</div>
+                                <div class="order-id">Order #<span>${orderId}</span></div>
+                            </div>
+                            <div class="receipt-section">
+                                <div class="section-title">Customer Details</div>
+                                <div class="row"><span class="label">Name</span><span class="value">${name}</span></div>
+                                <div class="row"><span class="label">Phone</span><span class="value">${phone}${phone2 ? ' · ' + phone2 : ''}</span></div>
+                                <div class="row"><span class="label">Governorate</span><span class="value">${governorate}</span></div>
+                                <div class="row"><span class="label">Address</span><span class="value">${address}</span></div>
+                                ${note ? `<div class="row"><span class="label">Note</span><span class="value">${note}</span></div>` : ''}
+                            </div>
+                            <div class="receipt-items">
+                                <div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#999;margin-bottom:6px;">Order Items</div>
+                                ${itemsHTML}
+                            </div>
+                            <div class="receipt-totals">
+                                <div class="total-row"><span class="label">Subtotal</span><span class="value">${formatLE(subtotal)}</span></div>
+                                <div class="total-row"><span class="label">Shipping</span><span class="value">${formatLE(shipping)}</span></div>
+                                <div class="grand-total">
+                                    <span>Total</span>
+                                    <span>${formatLE(total)}</span>
+                                </div>
+                            </div>
+                            <div class="receipt-footer">
+                                ${new Date().toLocaleString('en-EG', { dateStyle: 'medium', timeStyle: 'short' })} · Thank you for your order
                             </div>
                         </div>
-                        <div class="receipt-footer">
-                            ${new Date().toLocaleString('en-EG', { dateStyle: 'medium', timeStyle: 'short' })} · Thank you for your order
-                        </div>
-                    </div>
-                `;
+                    `;
         }
 
         async function downloadOrderAsPNG(order) {
@@ -2661,28 +2868,28 @@
                 const imgSrc = p.image || 'https://picsum.photos/seed/placeholder/44/44';
 
                 return `
-                        <div class="product-item">
-                            <div class="info">
-                                <img class="product-thumb" src="${imgSrc}" alt="${p.name}" onclick="event.stopPropagation(); openImageLightbox('${encodeURIComponent(imgSrc)}')" />
-                                <span class="name">${p.name}</span>
-                                <span class="price">${formatLE(p.priceLE)}</span>
-                                ${hasSale ? `<span class="badge badge-sale">Sale</span>` : ''}
-                                ${p.bestSelling ? `<span class="badge badge-best">★ Best</span>` : ''}
-                                ${p.newArrival ? `<span class="badge badge-new">New</span>` : ''}
-                                <span class="meta">
-                                    <span class="badge ${stockBadge}">${stockLabel}</span>
-                                    ${colorCount ? `<span>🎨${colorCount}</span>` : ''}
-                                    ${sizeCount ? `<span>📏${sizeCount}</span>` : ''}
-                                    <span style="color:#ccc;">|</span>
-                                    <span style="color:#999;">${p.category || 'Uncategorized'}</span>
-                                </span>
+                            <div class="product-item">
+                                <div class="info">
+                                    <img class="product-thumb" src="${imgSrc}" alt="${p.name}" onclick="event.stopPropagation(); openImageLightbox('${encodeURIComponent(imgSrc)}')" />
+                                    <span class="name">${p.name}</span>
+                                    <span class="price">${formatLE(p.priceLE)}</span>
+                                    ${hasSale ? `<span class="badge badge-sale">Sale</span>` : ''}
+                                    ${p.bestSelling ? `<span class="badge badge-best">★ Best</span>` : ''}
+                                    ${p.newArrival ? `<span class="badge badge-new">New</span>` : ''}
+                                    <span class="meta">
+                                        <span class="badge ${stockBadge}">${stockLabel}</span>
+                                        ${colorCount ? `<span>🎨${colorCount}</span>` : ''}
+                                        ${sizeCount ? `<span>📏${sizeCount}</span>` : ''}
+                                        <span style="color:#ccc;">|</span>
+                                        <span style="color:#999;">${p.category || 'Uncategorized'}</span>
+                                    </span>
+                                </div>
+                                <div class="actions">
+                                    <button class="edit-btn" data-id="${p.id}" title="Edit"><i class="fas fa-pen"></i></button>
+                                    <button class="delete-btn" data-id="${p.id}" title="Delete"><i class="fas fa-trash"></i></button>
+                                </div>
                             </div>
-                            <div class="actions">
-                                <button class="edit-btn" data-id="${p.id}" title="Edit"><i class="fas fa-pen"></i></button>
-                                <button class="delete-btn" data-id="${p.id}" title="Delete"><i class="fas fa-trash"></i></button>
-                            </div>
-                        </div>
-                    `;
+                        `;
             }).join('');
 
             container.querySelectorAll('.edit-btn').forEach(btn => {
@@ -2791,13 +2998,13 @@
             container.innerHTML = tempColorVariants.map((v, idx) => {
                 const imgPreview = v.image ? `<img class="img-preview" src="${v.image}" alt="color" />` : '';
                 return `
-                        <span class="tag">
-                            <span class="dot" style="background:${v.color};"></span>
-                            ${v.color}
-                            ${imgPreview}
-                            <span class="remove-tag" data-index="${idx}">✕</span>
-                        </span>
-                    `;
+                            <span class="tag">
+                                <span class="dot" style="background:${v.color};"></span>
+                                ${v.color}
+                                ${imgPreview}
+                                <span class="remove-tag" data-index="${idx}">✕</span>
+                            </span>
+                        `;
             }).join('');
             container.querySelectorAll('.remove-tag').forEach(el => {
                 el.addEventListener('click', () => {
@@ -2884,12 +3091,12 @@
             if (countLabel) countLabel.textContent = `${allCategories.length} categories`;
 
             container.innerHTML = allCategories.map(cat => `
-                    <span class="category-chip">
-                        <span class="cat-img"><img src="${cat.image}" alt="${cat.name}" /></span>
-                        ${cat.name}
-                        <span class="remove-cat" data-cat="${cat.name}">✕</span>
-                    </span>
-                `).join('');
+                        <span class="category-chip">
+                            <span class="cat-img"><img src="${cat.image}" alt="${cat.name}" /></span>
+                            ${cat.name}
+                            <span class="remove-cat" data-cat="${cat.name}">✕</span>
+                        </span>
+                    `).join('');
 
             container.querySelectorAll('.remove-cat').forEach(el => {
                 el.addEventListener('click', async () => {
@@ -2954,12 +3161,12 @@
             EGYPT_GOVERNORATES.forEach(g => {
                 const price = shippingRates[g] !== undefined ? shippingRates[g] : DEFAULT_SHIPPING;
                 html += `
-                        <div class="shipping-item">
-                            <span class="gov-name">${g}</span>
-                            <input type="number" class="ship-price-input" data-gov="${g}" value="${price}" step="0.5" min="0" />
-                            <button class="save-ship-btn" data-gov="${g}">Save</button>
-                        </div>
-                    `;
+                            <div class="shipping-item">
+                                <span class="gov-name">${g}</span>
+                                <input type="number" class="ship-price-input" data-gov="${g}" value="${price}" step="0.5" min="0" />
+                                <button class="save-ship-btn" data-gov="${g}">Save</button>
+                            </div>
+                        `;
             });
             grid.innerHTML = html;
 
@@ -3122,21 +3329,17 @@
                 if (data) {
                     const currentKeys = Object.keys(data);
 
-                    // Find new keys (not in lastKnownOrderKeys)
                     for (const key of currentKeys) {
                         if (!lastKnownOrderKeys.has(key)) {
                             newOrderKeys.push(key);
                         }
                     }
 
-                    // Update the set with all current keys
                     lastKnownOrderKeys = new Set(currentKeys);
 
-                    // Load fresh order data
                     allOrders = currentKeys.map(key => ({ ...data[key], _key: key }));
                     allOrders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-                    // If not initial load, send notifications for new orders
                     if (!isInitialOrderLoad && newOrderKeys.length > 0) {
                         for (const key of newOrderKeys) {
                             const order = allOrders.find(o => o._key === key);
@@ -3149,24 +3352,34 @@
                                 const body =
                                     `From: ${customerName} · Items: ${items} · Total: ${formatLE(total)}\nTap to view in admin panel.`;
 
-                                // Send notification
-                                sendNotification(title, body);
+                                // Send push notification if available
+                                if (pushSubscription) {
+                                    // Use SW to show notification
+                                    if (swRegistration) {
+                                        try {
+                                            swRegistration.showNotification(title, {
+                                                body: body,
+                                                icon: 'https://picsum.photos/seed/selva/64/64',
+                                                badge: 'https://picsum.photos/seed/selva/72/72',
+                                                vibrate: [200, 100, 200],
+                                                tag: `order-${key}`,
+                                                requireInteraction: true,
+                                                data: { url: '/' }
+                                            });
+                                        } catch (e) {}
+                                    }
+                                }
 
-                                // Also show toast
                                 showToast(`🛍️ New order from ${customerName} — ${formatLE(total)}`);
                             }
                         }
                     }
 
-                    // Update UI
                     renderOrders();
                     updateBadges();
-
-                    // Mark initial load as complete
                     isInitialOrderLoad = false;
 
                 } else {
-                    // No data — reset
                     lastKnownOrderKeys = new Set();
                     allOrders = [];
                     renderOrders();
@@ -3178,12 +3391,23 @@
 
         // ─── INIT ──────────────────────────────────────────────────
         async function init() {
-            // Check notification permission state
-            if ('Notification' in window) {
-                if (Notification.permission === 'granted') {
-                    notifPermissionGranted = true;
+            // Check push notification support
+            if ('serviceWorker' in navigator && 'PushManager' in window) {
+                try {
+                    // Register SW early
+                    const reg = await registerServiceWorker();
+                    if (reg) {
+                        swRegistration = reg;
+                        // Check for existing subscription
+                        const sub = await reg.pushManager.getSubscription();
+                        if (sub) {
+                            pushSubscription = sub;
+                            updatePushStatus(true);
+                        }
+                    }
+                } catch (err) {
+                    console.warn('SW init error:', err);
                 }
-                updateNotifBanner();
             }
 
             await loadCategoriesFromFirebase();
@@ -3201,6 +3425,7 @@
             populateCategorySelect();
             renderColorRows();
             updateBadges();
+            updateNotifBanner();
 
             // ─── EVENT BINDINGS ──────────────────────────────────
 
@@ -3332,8 +3557,8 @@
                 }
             });
 
-            // ─── NOTIFICATION BUTTON ─────────────────────────────
-            document.getElementById('notifGrantBtn').addEventListener('click', requestNotificationPermission);
+            // ─── PUSH NOTIFICATION BUTTON ──────────────────────
+            document.getElementById('notifGrantBtn').addEventListener('click', handleEnablePush);
 
             // Listen for color changes from other tabs
             db.ref('settings/colors').on('value', (snap) => {
@@ -3352,13 +3577,15 @@
             // Set initial tab
             switchTab('orders');
 
-            // If notifications are already granted, send a test notification after a short delay
-            if (Notification.permission === 'granted') {
-                notifPermissionGranted = true;
+            // If push is already active, update banner
+            if (pushSubscription) {
                 updateNotifBanner();
+                // Send a test notification after a short delay if this is a fresh session
                 setTimeout(() => {
-                    sendTestNotification();
-                }, 800);
+                    if (pushSubscription) {
+                        sendTestPushNotification();
+                    }
+                }, 1000);
             }
         }
 
